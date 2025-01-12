@@ -1,26 +1,35 @@
 import streamlit as st
 from playwright.sync_api import sync_playwright
 import re
-import phonenumbers
+import openai
+import streamlit as st
+from playwright.sync_api import sync_playwright
+import re
 import openai
 
-# OpenAI API Key
-openai.api_key = "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"  # Replace with your OpenAI API key
+# Set your OpenAI API key
+openai.api_key = "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"  # Replace with your actual API key
 
-# Function to clean and validate phone numbers
-def clean_phone_numbers(phone_numbers):
-    valid_numbers = []
-    for number in phone_numbers:
-        try:
-            parsed_number = phonenumbers.parse(number, "GB")  # Default to UK region
-            if phonenumbers.is_valid_number(parsed_number):
-                valid_numbers.append(phonenumbers.format_number(parsed_number, phonenumbers.PhoneNumberFormat.INTERNATIONAL))
-        except phonenumbers.NumberParseException:
-            continue
-    return valid_numbers
+# Function to scrape emails from a URL
+def scrape_emails_from_url(url):
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url, timeout=60000)
+            page.wait_for_load_state("networkidle")
 
-# Function to analyze tone of voice using GPT
-def analyze_tone(text):
+            # Extract emails from page content
+            page_content = page.inner_text('body')
+            emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', page_content)
+
+            browser.close()
+            return list(set(emails))  # Remove duplicates
+    except Exception as e:
+        return {"error": str(e)}
+
+# Function to analyze text tone using GPT
+def analyze_tone_with_gpt(text):
     try:
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
@@ -35,114 +44,145 @@ def analyze_tone(text):
     except Exception as e:
         return f"Error analyzing tone: {str(e)}"
 
-# Function to scrape website for contact details and tone
-def scrape_dynamic_site(url):
+# Function to generate personalized emails using GPT
+def generate_emails_with_gpt(username, service, audience, unique_value, tone="professional"):
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, timeout=60000)
-            page.wait_for_load_state("networkidle")
-
-            # Extract visible content
-            page_content = page.inner_text('body')
-
-            # Extract phone numbers and emails
-            phone_numbers = re.findall(
-                r'\+?\d{1,3}?[-.\s()]*(\d{2,4})[-.\s()]*(\d{2,4})[-.\s()]*(\d{2,4})',
-                page_content
-            )
-            email_addresses = re.findall(
-                r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
-                page_content
-            )
-
-            # Flatten and join phone number parts
-            phone_numbers = ["".join(parts) for parts in phone_numbers]
-            valid_numbers = clean_phone_numbers(phone_numbers)
-
-            # Extract tone of voice from text (use first 500 characters)
-            sample_text = page_content[:500]
-            tone = analyze_tone(sample_text)
-
-            browser.close()
-            return {
-                "emails": list(set(email_addresses)),
-                "phone_numbers": valid_numbers,
-                "tone_of_voice": tone
-            }
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are an expert email writer."},
+                {"role": "user", "content": (
+                    f"Write three {tone} emails for a {service}. "
+                    f"The target audience is {audience}. Highlight their unique value: {unique_value}. "
+                    f"The emails should be signed off from {username}. "
+                    f"The emails should include: 1) An introductory email, 2) A follow-up email, "
+                    f"and 3) A final outreach email."
+                )}
+            ],
+            max_tokens=600
+        )
+        emails = response.choices[0].message["content"].strip()
+        return emails
     except Exception as e:
-        return {"error": str(e)}
+        return f"Error generating emails: {str(e)}"
 
 # Streamlit App
-st.title("ODJO Freelancer Assistant")
+st.title("ODJO AI - Personalized Steps")
 
-# Step 1: Scrape or Enter Text
-st.header("Step 1: Analyze Freelancer Content")
+# Initialize session state for step tracking and username
+if "step" not in st.session_state:
+    st.session_state["step"] = 1  # Start at Step 1
+if "username" not in st.session_state:
+    st.session_state["username"] = ""
 
-# Option to provide URL or enter text
-input_option = st.radio("Choose an input method:", ["Enter a URL", "Manually enter text"])
+# Total number of steps
+total_steps = 4
 
-scraped_data = {}
-if input_option == "Enter a URL":
-    url = st.text_input("Enter the portfolio website URL to scrape:", "")
-    if url:
-        st.write(f"Scraping data from {url}...")
-        scraped_data = scrape_dynamic_site(url)
+# Progress bar
+progress = st.progress(st.session_state["step"] / total_steps)
+# Step 1: Collect Name and Optional Analysis
+if st.session_state["step"] == 1:
+    st.header("Step 1: Tell Us About You")
+    st.session_state["username"] = st.text_input("What is your name?", st.session_state["username"])
 
-        if scraped_data and "error" in scraped_data:
-            st.error(f"Error: {scraped_data['error']}")
-        elif scraped_data:
-            st.write("### Emails Found:")
-            st.write(scraped_data["emails"])
-
-            st.write("### Phone Numbers Found:")
-            st.write(scraped_data["phone_numbers"])
-
-            st.write("### Detected Tone of Voice:")
-            st.write(scraped_data["tone_of_voice"])
-
-else:
-    manual_text = st.text_area("Enter text to analyze tone of voice:", "")
-    if manual_text:
-        detected_tone = analyze_tone(manual_text)
-        st.write("### Detected Tone of Voice:")
-        st.write(detected_tone)
-        scraped_data["tone_of_voice"] = detected_tone
-
-# Step 2: Generate Personalized Emails
-st.header("Step 2: Generate Personalized Emails")
-
-if "tone_of_voice" in scraped_data:
-    detected_tone = scraped_data["tone_of_voice"]
-else:
-    detected_tone = "professional"  # Default fallback tone
-
-service = st.text_input("Describe your service (e.g., 'I am a photographer specializing in weddings')", "")
-audience = st.text_input("Who is your target audience? (e.g., 'event planners, couples')", "")
-unique_value = st.text_input("What makes your service unique? (e.g., 'My style is candid and creative')", "")
-
-if st.button("Generate Emails"):
-    if service and audience and unique_value:
-        try:
-            # Generate three emails using GPT
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are an expert email writer."},
-                    {"role": "user", "content": (
-                        f"Write three {detected_tone} emails for a {service}. "
-                        f"The target audience is {audience}. Highlight their unique value: {unique_value}. "
-                        f"The emails should include: 1) An introductory email, 2) A follow-up email, "
-                        f"and 3) A final outreach email."
-                    )}
-                ],
-                max_tokens=600
-            )
-            emails = response.choices[0].message["content"].strip()
-            st.subheader("Generated Emails:")
-            st.write(emails)
-        except Exception as e:
-            st.error(f"Error generating emails: {str(e)}")
+    if st.session_state["username"]:
+        st.write(f"Welcome, {st.session_state['username']}! Let's get started.")
     else:
-        st.warning("Please fill in all fields to generate emails.")
+        st.warning("Please enter your name to proceed.")
+
+    analysis_choice = st.radio("Choose an option:", ["Analyze Website", "Enter Text for Tone Analysis", "Skip"])
+    if analysis_choice == "Analyze Website":
+        url = st.text_input("Enter a website URL to analyze:", "")
+        if st.button("Analyze Website"):
+            if url:
+                st.write(f"Scraping data from {url}...")
+                emails = scrape_emails_from_url(url)
+
+                if "error" in emails:
+                    st.error(f"Error: {emails['error']}")
+                elif emails:
+                    st.write("### Emails Found:")
+                    st.write(emails)
+                    if len(emails) > 0:
+                        sample_text = emails[0]  # Using first email for tone analysis
+                        tone = analyze_tone_with_gpt(sample_text)
+                        st.write("### Detected Tone of Text:")
+                        st.write(tone)
+                else:
+                    st.write("No emails found on this website.")
+    elif analysis_choice == "Enter Text for Tone Analysis":
+        manual_text = st.text_area("Enter text to analyze its tone:", "")
+        if st.button("Analyze Text Tone"):
+            if manual_text:
+                tone = analyze_tone_with_gpt(manual_text)
+                st.write("### Detected Tone of Text:")
+                st.write(tone)
+            else:
+                st.warning("Please enter some text to analyze.")
+    else:
+        st.write("Skipping this step.")
+
+    if st.button("Proceed to Step 2"):
+        if st.session_state["username"]:
+            st.session_state["step"] = 2
+            # No need for rerun; Streamlit will refresh automatically
+        else:
+            st.warning("Please enter your name to proceed.")
+
+# Step 2: Define Service and Audience
+if st.session_state["step"] == 2:
+    st.header(f"Step 2: Define Your Service and Audience, {st.session_state['username']}")
+    service = st.text_input("Describe your service (e.g., 'I am a photographer specializing in weddings')", "")
+    audience = st.text_input("Who is your target audience? (e.g., 'event planners, couples')", "")
+    unique_value = st.text_input("What makes your service unique? (e.g., 'My style is candid and creative')", "")
+    tone = st.text_input("What tone would you like for your emails? (e.g., 'professional', 'friendly')", "professional")
+
+    if st.button("Proceed to Step 3"):
+        if service and audience and unique_value:
+            st.session_state["service"] = service
+            st.session_state["audience"] = audience
+            st.session_state["unique_value"] = unique_value
+            st.session_state["tone"] = tone
+            st.session_state["step"] = 3
+        else:
+            st.warning(f"Please fill in all fields to proceed, {st.session_state['username']}.")
+
+
+# Step 3: Generate Personalized Emails
+if st.session_state["step"] == 3:
+    st.header(f"Step 3: Generate Personalised Emails for {st.session_state['username']}")
+    if st.button("Generate Emails"):
+        emails = generate_emails_with_gpt(
+            st.session_state["username"],
+            st.session_state["service"],
+            st.session_state["audience"],
+            st.session_state["unique_value"],
+            st.session_state["tone"]
+        )
+        st.subheader("Generated Emails:")
+        st.write(emails)
+
+    if st.button("Proceed to Step 4"):
+        st.session_state["step"] = 4
+        st.experimental_rerun()
+
+# Step 4: Find ICPs with Emails
+if st.session_state["step"] == 4:
+    st.header(f"Step 4: Find Ideal Customer Profiles (ICPs) with Emails for {st.session_state['username']}")
+    service_keywords = st.session_state["service"].replace(" ", "+")
+    audience_keywords = st.session_state["audience"].replace(" ", "+")
+    if st.button("Find ICP Emails"):
+        st.write("Searching for ICPs... (This may take a moment)")
+        # Here you would use your ICP scraping logic
+        # Placeholder ICP result
+        icps = [
+            {"name": "Example Business", "url": "https://example.com", "emails": ["contact@example.com"]}
+        ]
+        st.subheader("Top ICPs:")
+        for idx, icp in enumerate(icps, 1):
+            st.write(f"### #{idx}: {icp['name']}")
+            st.write(f"URL: [{icp['url']}]({icp['url']})")
+            st.write(f"Emails: {', '.join(icp['emails']) if icp['emails'] else 'No emails found'}")
+
+# Update progress bar
+progress.progress(st.session_state["step"] / total_steps)
