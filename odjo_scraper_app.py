@@ -5,7 +5,7 @@ import phonenumbers
 import openai
 
 # OpenAI API Key
-openai.api_key = "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"  # Replace with your OpenAI API key
+openai.api_key = "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"  # Replace with your OpenAI API key
 
 # Function to clean and validate phone numbers
 def clean_phone_numbers(phone_numbers):
