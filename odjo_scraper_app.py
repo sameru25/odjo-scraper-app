@@ -6,9 +6,9 @@ import streamlit as st
 from playwright.sync_api import sync_playwright
 import re
 import openai
+import os
 
-# Set your OpenAI API key
-openai.api_key = "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"  # Replace with your actual API key
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Function to scrape emails from a URL
 def scrape_emails_from_url(url):
